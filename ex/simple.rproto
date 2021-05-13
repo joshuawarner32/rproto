@@ -1,0 +1,13 @@
+
+struct File {
+    contents: Vec<u8>,
+}
+
+struct Dir {
+    entries: HashMap<String, DirEntry>,
+}
+
+enum DirEntry {
+    File(File),
+    Dir(Dir),
+}
