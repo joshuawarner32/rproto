@@ -76,3 +76,39 @@ This leads to us having to write a bunch of boilerplate in rust to encode/decode
 Write rust struct/enum/trait declarations, and have a tool to transpile those into both:
 * Rust code to do the canonical (de)serialization
 * Protobuf messages to allow communication with other languages
+
+Currently this repo is noting more than a partial-proof-of-concept, nowhere remotely production ready.
+
+If you look at `ex/simple.rproto`:
+
+```
+struct File {
+    contents: Vec<u8>,
+}
+
+struct Dir {
+    entries: HashMap<String, DirEntry>,
+}
+
+enum DirEntry {
+    File(File),
+    Dir(Dir),
+}
+```
+
+We can currently translate that to the following (correct-ish?) protobuf declarations:
+
+```
+message File {
+  bytes contents = 1;
+}
+message Dir {
+  map<String, DirEntry> entries = 1;
+}
+message DirEntry {
+  oneof dir_entry {
+    File File = 1;
+    Dir Dir = 2;
+  }
+}
+```
