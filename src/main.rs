@@ -202,15 +202,26 @@ impl Emitter {
 
     fn repeated_field(&mut self, name: &str, ty: &str, id: &mut usize) {
         self.text("repeated ");
-        self.field(name, ty, id);
+        self.plain_field(name, ty, id);
     }
 
-    fn field(&mut self, name: &str, ty: &str, id: &mut usize) {
+    fn plain_field(&mut self, name: &str, ty: &str, id: &mut usize) {
+        self.field_with_annotations(name, ty, id, |_| {});
+    }
+
+    fn defaulted_field(&mut self, name: &str, ty: &str, id: &mut usize) {
+        self.field_with_annotations(name, ty, id, |s| {
+            s.text(" [(gogoproto.nullable)=false]");
+        });
+    }
+
+    fn field_with_annotations(&mut self, name: &str, ty: &str, id: &mut usize, f: impl FnOnce(&mut Self)) {
         self.text(ty);
         self.text(" ");
         self.text(name);
         self.text(" = ");
         self.text(&format!("{}", &id));
+        f(self);
         self.text(";");
         self.line();
         *id += 1;
@@ -247,7 +258,7 @@ fn emit_enum(ir: &IrModule, name: &str, item: &EnumTy, e: &mut Emitter) {
         } else {
             to_append.push((field_name, fields));
 
-            e.field(field_name, &format!("{}{}", name, field_name), &mut id);
+            e.plain_field(field_name, &format!("{}{}", name, field_name), &mut id);
         }
     }
 
@@ -276,36 +287,63 @@ fn emit_fields(ir: &IrModule, name: &str, fields: &Fields, e: &mut Emitter) {
 fn emit_field(field_name: &str, ty: &TypeRef, id: &mut usize, e: &mut Emitter) {
     match ty {
         TypeRef::Normal(ty) => {
-            // match name {
-                
-            // }
-            e.field(field_name, ty, id);
+            if let Some(simple) = translate_simple_type_name(ty) {
+                e.plain_field(field_name, simple, id);
+            } else {
+                e.defaulted_field(field_name, ty, id);
+            };
         }
         TypeRef::Generic(ty, args) => {
             match ty.as_str() {
                 "Vec" => {
-                    if let Some(single) = singular(args) {
-                        match single {
-                            TypeRef::Normal(name) => {
-                                if name == "u8" {
-                                    e.field(field_name, "bytes", id);
-                                } else {
-                                    e.repeated_field(field_name, name, id);
-                                }
+                    let single = singular(args).unwrap();
+                    match single {
+                        TypeRef::Normal(name) => {
+                            if name == "u8" {
+                                e.defaulted_field(field_name, "bytes", id);
+                            } else {
+                                e.repeated_field(field_name, name, id);
                             }
-                            TypeRef::Generic(_, _) => panic!(),
                         }
-                    } else {
-                        panic!()
+                        TypeRef::Generic(_, _) => panic!(),
                     }
                 }
                 "HashMap" => {
                     let (k, v) = double(args).unwrap();
-                    e.field(field_name, &format!("map<{}, {}>", simple_type(k), simple_type(v)), id);
+                    e.plain_field(field_name, &format!("map<{}, {}>", simple_type(k), simple_type(v)), id);
+                }
+                "Option" => {
+                    let single = singular(args).unwrap();
+                    match single {
+                        TypeRef::Normal(name) => {
+                            if let Some(simple) = translate_simple_type_name(name) {
+                                // optional must be encoded as a nullable oneof
+                                e.begin_oneof(&format!("{}_value", to_underscore_case(&field_name)));
+                                e.defaulted_field(field_name, simple, id);
+                                e.end();
+                            } else {
+                                e.plain_field(field_name, ty, id);
+                            }
+                        }
+                        TypeRef::Generic(_, _) => panic!(),
+                    }
                 }
                 _ => panic!(),
             }
         }
+    }
+}
+
+fn translate_simple_type_name(name: &str) -> Option<&str> {
+    match name {
+        "u8" | "u16" | "u32" => Some("uint32"),
+        "u64" => Some("uint64"),
+        "i8" | "i16" | "i32" => Some("int32"),
+        "i64" => Some("int64"),
+        "f32" => Some("float"),
+        "f64" => Some("double"),
+        "bool" => Some("bool"),
+        _ => None,
     }
 }
 
@@ -329,16 +367,6 @@ fn double<T>(args: &[T]) -> Option<(&T, &T)> {
         Some((&args[0], &args[1]))
     } else {
         None
-    }
-}
-
-fn is_single_ty_arg(args: &[TypeRef], arg: &str) -> bool {
-    if args.len() != 1 {
-        return false;
-    }
-    match &args[0] {
-        TypeRef::Normal(name) => name == arg,
-        TypeRef::Generic(_, _) => false,
     }
 }
 

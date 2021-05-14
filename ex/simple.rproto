@@ -1,5 +1,7 @@
 
 struct File {
+    owner: Option<u32>, // None for system owned files... I guess? It's just an example...
+    flags: u32,
     contents: Vec<u8>,
 }
 
